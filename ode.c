@@ -26,7 +26,17 @@ void stepRK2(double dt, double t, double a[], double anew[], int nvar,
 void stepRK4(double dt, double t, double a[], double anew[], int nvar,
              double params[], double *buf,
              void (*dxdt)(double t, double a[], double params[], double derivs[])); 
-void func_pendulum(double t, double a[], double params[], double dadt[]);
+void stepVelocityVerlet(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[]));
+
+void stepLeapFrog(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[]));
+
+void stepYoshida4(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[]));
 /****** function prototypes end ******/
 
 
@@ -40,7 +50,8 @@ void func_pendulum(double t, double a[], double params[], double dadt[]);
 // Generic ODE solver:
 // pt and px should hold nsteps+1 elements 
 // nvar  = number of dependent variables 
-// order = order of integration: 1 = Euler, -1 = Euler-Cromer, 2 = RK2, 4 = RK4
+// order = choose a method of integration:  1 = Euler, -1 = Euler-Cromer, 2 = RK2, 4 = RK4,
+//                                          5 = Leap Frog, 6 = Yoshida4, 13 = Velocity Verlet (default)
 int solve_ode(double *pt, double *px, double dt, int nsteps, int nvar, int order, double *params,
                void (*dxdt)(double t, double *px, double *params, double *derivs))
 {
@@ -80,9 +91,17 @@ int solve_ode(double *pt, double *px, double dt, int nsteps, int nvar, int order
       step_ode = &stepRK2;
       break;
     case 4:
-    default:
-      //use RK4 stepping by default
       step_ode = &stepRK4;      
+    case 5:
+      step_ode = &stepLeapFrog;
+      break;
+    case 6:
+      step_ode = &stepYoshida4;
+      break;
+    case 13:
+    default:
+        //use Velocity Verlet stepping by default
+        step_ode = &stepVelocityVerlet;
   }
   
   if(NULL == dxdt) {
@@ -159,17 +178,114 @@ void stepRK4(double dt, double t, double a[], double anew[], int nvar,
       anew[i] = a[i] + sixth*(f1[i]+2.0*f2[i]+2.0*f3[i]+f4[i])*dt; 
 }
 
-/******** derivs  *********************/
-void func_pendulum(double t, double a[], double params[], double dadt[])
-/*** Take inputs t, and a.  And output dadt. ***/
-/*** I have coded for you eq. (3.17) from the text for the pendulum ***/
+/* source: https://young.physics.ucsc.edu/115/leapfrog.pdf*/
+void stepLeapFrog(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[]))
 {
-  double theta ; 
-  double dtheta_dt ; 
-  theta = a[0] ; 
-  dtheta_dt = a[1] ;
-  dadt[0] = dtheta_dt ; 
-  dadt[1] = -sin(theta)*params[0]/params[1] - params[2]*dtheta_dt + params[3]*sin(params[4]*t);
+    int i;
+    double* dadt = buf, * vhalf = buf + nvar;
+
+    (*dxdt)(t, a, params, dadt);
+
+    for (i = 0; i < nvar / 2; i++){
+        vhalf[i] = a[2 * i + 1] + dadt[2 * i + 1] * 0.5 * dt;
+    }
+    
+    for (i = 0; i < nvar / 2; i++){
+        anew[2 * i] = a[2 * i] + vhalf[i] * dt;
+    }
+
+    (*dxdt)(t + dt, anew, params, dadt);
+
+    for (i = 0; i < nvar / 2; i++){
+        anew[2 * i + 1] = vhalf[i] + 0.5 * dadt[2 * i + 1] * dt;
+    }
+}
+
+/* source: https://young.physics.ucsc.edu/115/leapfrog.pdf */
+void stepVelocityVerlet(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[]))
+{
+    int i;
+
+    /* f1 and f2 saves the values of dVdt */
+    /* halfV are velocities at 0.5*dt */
+    double* f1 = buf, * f2 = f1 + nvar, * halfV = f2 + nvar;
+
+    (*dxdt)(t, a, params, f1);
+
+    for (i = 0; i < (nvar / 2); i++) {
+        halfV[i] = *(a + 2 * i + 1) + 0.5 * f1[2 * i + 1] * dt;
+    }
+
+    /* compute new position */
+    for (i = 0; i < (nvar / 2); i++) {
+        *(anew + 2 * i) = *(a + 2 * i) + halfV[i] * dt;
+    }
+
+    (*dxdt)(t + dt, anew, params, f2);
+
+    /* compute new velocity */
+    for (i = 0; i < (nvar / 2); i++) {
+        *(anew + 2 * i + 1) = halfV[i] + 0.5 * dt * f2[2 * i + 1];
+    }
+}
+
+/* source: https://en.wikipedia.org/wiki/Leapfrog_integration#4th_order_Yoshida_integrator */
+void stepYoshida4(double dt, double t, double a[], double anew[], int nvar,
+    double params[], double* buf,
+    void (*dxdt)(double t, double a[], double params[], double derivs[])) {
+    int i, k;
+
+    /* f stores the values of dVdt */
+    /* temp_xV stores temporary values for x,V */
+    /* coeff_xV includes 4 values for x and 3 values for V, order in x,V */
+
+    double* f = buf, * temp_xV = f + nvar, * coeff_xV = temp_xV + nvar;
+
+    /* set coefficients */
+    const double num0 = -1.7024143839193153215916254;
+    const double num1 = 1.3512071919596577718181152;
+
+    /* c1, c2, c3, c4 coefficients for x */
+    coeff_xV[0] = 0.5 * num1;
+    coeff_xV[2] = 0.5 * (num0 + num1);
+    coeff_xV[4] = coeff_xV[2];
+    coeff_xV[6] = coeff_xV[0];
+
+    /* d1, d2, d3 coefficients for V */
+    coeff_xV[1] = num1;
+    coeff_xV[3] = num0;
+    coeff_xV[5] = coeff_xV[1];
+
+    /* set temporary variables to initial conditions*/
+
+    for (i = 0; i < nvar; i++) {
+        temp_xV[i] = a[i];
+    }
+
+    /* take three Euler steps with different dt
+    assume that dxdt = V and dVdt is defined by the given function */
+    
+    for (k = 0; k < 3; k++) {
+        for (i = 0; i < (nvar / 2); i++) {
+            temp_xV[2 * i] = temp_xV[2 * i] + coeff_xV[2 * k] * temp_xV[2 * i + 1] * dt;
+        }
+
+        (*dxdt)(t + coeff_xV[2 * k] * dt, temp_xV, params, f);
+
+        for (i = 0; i < (nvar / 2); i++) {
+            temp_xV[2 * i + 1] = temp_xV[2 * i + 1] + coeff_xV[2 * k + 1] * f[2 * i + 1] * dt;
+        }
+    }
+
+    /* compute new values */
+    for (i = 0; i < (nvar / 2); i++) {
+        anew[2 * i] = temp_xV[2 * i] + coeff_xV[6] * temp_xV[2 * i + 1] * dt;
+        anew[2 * i + 1] = temp_xV[2 * i + 1];
+    }
 }
 
 /**************************
