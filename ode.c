@@ -104,11 +104,6 @@ int solve_ode(double *pt, double *px, double dt, int nsteps, int nvar, int order
         step_ode = &stepVelocityVerlet;
   }
   
-  if(NULL == dxdt) {
-    //if no r.h.s. function provided, devault to damped forced pendulum
-    dxdt = &func_pendulum;
-  }
-  
   for(step = 0; step < nsteps; step++) {
     pt[step+1] = pt[0] + (step+1)* dt;    
     /* take step */
@@ -191,7 +186,7 @@ void stepLeapFrog(double dt, double t, double a[], double anew[], int nvar,
     for (i = 0; i < nvar / 2; i++){
         vhalf[i] = a[2 * i + 1] + dadt[2 * i + 1] * 0.5 * dt;
     }
-    
+
     for (i = 0; i < nvar / 2; i++){
         anew[2 * i] = a[2 * i] + vhalf[i] * dt;
     }
