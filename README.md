@@ -1,4 +1,4 @@
 # planetary_orbits
 Modeling the planetary orbits and predicting the stability of the systems (C, Python)
 
-To call C functions inside Jupyter Notebook, I utilized Sasha Tchekhovskoy's approach https://bitbucket.org/atchekho/ode/src/master/.
+To call C functions inside Jupyter Notebook, I utilized Sasha Tchekhovskoy's approach.
